@@ -41,24 +41,16 @@ export const XSS_PATTERNS = [
 // ============================================
 
 export const VULGAR_ABBREVIATIONS = [
-	/\bkys\b/i,            // kill yourself - block
-	/\brm\b/i,             // racial slur - block
-	/\bstfu\b/i,           // shut the fuck up - block
-	/\bf+u+\b/i,           // f*ck variations - block
-	/\bs+u+c+k+\b/i,       // s*ck variations - block
-	/\bb+i+t+c+h+\b/i,     // b*tch variations - block
-	/\bd+a+m+n+\b/i,       // d*mn variations - block
-	/\ba+s+s+\b/i,         // a*s variations - block
-	/\bd+i+c+k+\b/i,       // d*ck variations - block
-	/\bp+u+s+s+y+\b/i,     // p*ssy variations - block
-	/\bn+i+g+g+e+r+\b/i,   // racial slurs - block
-	/\bfml\b/i,            // fuck my life - block
-	/\bsmh\b/i,            // shaking my head - block
-	/\bgtfo\b/i,           // get the fuck out - block
-	/\bYGK\?/i,            // you gonna catch these hands - block
-	/\bLMAO\b/i,           // laughing my ass off - block
-	/\bROFL\b/i,           // rolling on floor laughing - block
-	/\bIOU\b/i,            // not vulgar, ignore
+	/\bkys\b/i,
+	/\bstfu\b/i,
+	/\bf+u+c+k+\b/i,
+	/\bb+i+t+c+h\b/i,
+	/\bass\b(?!ess|ign|ume|ert|ist|ociat|embl)/i,
+	/\bd+i+c+k\b/i,
+	/\bp+u+s+s+y\b/i,
+	/\bn+i+g+g+e+r\b/i,
+	/\bfml\b/i,
+	/\bgtfo\b/i,
 ];
 
 // ============================================
