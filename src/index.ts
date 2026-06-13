@@ -13,6 +13,7 @@ import {
 	handleAdminCommentDelete, handleAdminCheck,
 } from './admin';
 import { handleContact } from './contact';
+import { handleModerationPage, handleModerationConfirm } from './moderation-approval';
 
 export class RateLimiter {
 	constructor(private readonly state: DurableObjectState) {}
@@ -145,6 +146,12 @@ export default {
 					break;
 				case 'POST /api/contact':
 					response = await handleContact(request, env);
+					break;
+				case 'GET /api/moderate':
+					response = await handleModerationPage(request, env);
+					break;
+				case 'POST /api/moderate/confirm':
+					response = await handleModerationConfirm(request, env);
 					break;
 				case 'GET /api/admin/stats':
 					response = await handleAdminStats(request, env);

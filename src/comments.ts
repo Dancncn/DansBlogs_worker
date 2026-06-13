@@ -5,6 +5,7 @@ import {
 	findSessionUser, checkRateLimit,
 } from './utils';
 import { moderateContent } from './moderation';
+import { sendModerationEmail } from './moderation-approval';
 
 export async function handleCommentsGet(request: Request, env: Env): Promise<Response> {
 	const url = new URL(request.url);
@@ -158,14 +159,26 @@ export async function handleCommentsPost(request: Request, env: Env): Promise<Re
 		return json({ error: 'Comment rejected by moderation' }, 400);
 	}
 
+	// 三态：ALLOW → 直接公开；REVIEW → 进待审(pending)，并邮件通知博主一键放行/拒绝。
+	const status = modResult.result === 'ALLOW' ? 'approved' : 'pending';
 	const commentId = `c_${randomBase64Url(12)}`;
 
 	await env.DB.prepare(
 		`INSERT INTO comments (id, parent_id, post_slug, user_id, body, status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, 'approved', ?, ?)`
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 	)
-		.bind(commentId, parentId, post, session.user_id, body, now, now)
+		.bind(commentId, parentId, post, session.user_id, body, status, now, now)
 		.run();
+
+	if (status === 'pending') {
+		// 邮件函数内部已 try/catch，发信失败不影响评论已入库（仍可在后台处理）。
+		await sendModerationEmail(env, {
+			id: commentId,
+			body,
+			author: session.name || session.login || 'Anonymous',
+			postSlug: post,
+		});
+	}
 
 	return json(
 		{
@@ -174,7 +187,7 @@ export async function handleCommentsPost(request: Request, env: Env): Promise<Re
 				parentId,
 				postSlug: post,
 				body,
-				status: 'approved',
+				status,
 				createdAt: now,
 				user: {
 					id: session.user_id,

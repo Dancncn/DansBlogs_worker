@@ -191,7 +191,8 @@ export async function handleMeUpdate(request: Request, env: Env): Promise<Respon
 		}
 
 		const modResult = await moderateUsername(usernameStr, env);
-		if (modResult.result === 'REJECT') {
+		if (modResult.result !== 'ALLOW') {
+			// 用户名偏严：REVIEW（可疑）与 REJECT 都不通过，让用户重选；AI 故障已在 callAIForUsername 内放行。
 			return json({ error: 'Username rejected by moderation. Please choose a different name.' }, 400);
 		}
 

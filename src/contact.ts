@@ -45,10 +45,18 @@ export async function handleContact(request: Request, env: Env): Promise<Respons
 		if (!turnstileValid) return json({ error: 'Invalid captcha' }, 400);
 	}
 
-	const fullContent = `${name} ${email} ${message}`;
-	const modResult = await moderateContent(fullContent, env);
+	// 联系表单只发到博主邮箱、不公开，故「只拦明显垃圾」：REJECT 不发；ALLOW/REVIEW 都发，
+	// REVIEW 仅在邮件主题加 ⚠️ 提示博主留意（你本人就是最终审核者）。审核内容去掉 email 噪声。
+	const modResult = await moderateContent(`${name}\n${message}`, env);
 	if (modResult.result === 'REJECT') {
 		return json({ error: 'Message rejected' }, 400);
+	}
+	const suspicious = modResult.result === 'REVIEW';
+
+	const to = env.CONTACT_TO_EMAIL;
+	if (!to) {
+		console.error('Contact email skipped: CONTACT_TO_EMAIL not configured');
+		return json({ error: 'Contact form is not configured' }, 500);
 	}
 
 	try {
@@ -59,9 +67,9 @@ export async function handleContact(request: Request, env: Env): Promise<Respons
 
 		await resend.emails.send({
 			from: 'DAN ARNOUX <contact@mail.danarnoux.com>',
-			to: ['DanArnoux@outlook.com'],
+			to: [to],
 			replyTo: email,
-			subject: `📬 ${name} sent you a message`,
+			subject: `${suspicious ? '⚠️ ' : '📬 '}${name} sent you a message`,
 			html: htmlContent,
 		});
 	} catch (error) {
