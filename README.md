@@ -149,8 +149,11 @@ Use Node 24. Copy `wrangler.example.toml` to the ignored `wrangler.toml`, replac
 # Install dependencies
 npm ci
 
-# Type checks, API regression tests, dry-run bundle and dependency audit
+# Type checks, Node API tests, real workerd acceptance and dependency audit
 npm run ci
+
+# Build and run isolated workerd acceptance only
+npm run test:runtime
 
 # Local development
 npm run dev

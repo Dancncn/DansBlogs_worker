@@ -2,7 +2,16 @@
 
 ## 检查与部署
 
-使用 Node 24 和 `npm ci`。`npm run ci` 执行 TS7 类型检查、真实内存 SQLite 上的接口回归、使用示例绑定的 Wrangler 模拟打包以及依赖扫描。测试中的 OAuth、邮件、AI、Access 公钥请求均由本地替身处理，不接触生产数据。
+使用 Node 24 和 `npm ci`。`npm run ci` 执行 TS7 类型检查、Node 接口回归、Wrangler 模拟打包、真实 workerd 运行时验收以及依赖扫描。测试不接触生产数据。
+
+两类测试分别执行，不能相互替代：
+
+- `npm test`：16 项 Node 接口回归，使用内存 SQLite 和本地服务替身，覆盖鉴权、隐私、审核、格式识别等细节。
+- `npm run test:runtime`：先使用提交到仓库的示例配置重新打包，再由 Miniflare 启动实际 workerd 进程并通过本机 HTTP 请求验收。D1、KV、R2 和 SQLite Durable Objects 使用独立临时目录，测试结束执行 `dispose()` 并删除临时数据。Miniflare 是开发依赖，版本与 Wrangler 使用的版本保持一致。
+
+运行时验收覆盖允许名单来源的凭据 CORS、未授权管理员拒绝、D1 浏览量和评论读写、真实 KV 审核缓存、OAuth state Cookie 标志与清理、过期会话撤销、R2 文件字节和 MIME、随机图片目录并发创建和跨用户权限。DO 测试通过 8 个并发请求确认限流，再等待 workerd 自动执行 alarm 清理；只在测试包装类中增加只读存储探针，生产 API 和限流逻辑保持原样。最后关闭整个实例、轮换测试签名密钥并启动新进程，检查持久数据和图片归属。
+
+Miniflare 配置完全由测试构造，不读取私有 `wrangler.toml` 或 `.dev.vars`；元数据获取和遥测关闭，Worker 外部请求统一由本地拦截器拒绝，HTTP 客户端不跟随外部重定向。测试会尝试一次带合成数据的 OAuth 交换来验证拦截器，但不会连接 GitHub。邮件、真实 AI 推理、线上 Access 公钥服务和云端资源配置不在该运行时验收范围内；本地验收通过不代表生产已经部署或第三方集成已在线验证。
 
 `npm run build` 仅模拟打包，不部署。`npm run deploy` 先通过全部检查，再使用本地 `wrangler.toml` 发布。实际配置文件和秘密不提交。示例配置只适合首次创建项目；已有部署必须保留自己的 Durable Object migration 历史和资源绑定，不能直接用示例覆盖。
 

@@ -5,13 +5,15 @@
   "scripts": {
     "dev": "wrangler dev --local --port 8787",
     "check": "tsc --noEmit",
-    "test": "node --import tsx --test tests/*.test.ts",
+    "test": "node --import tsx --test tests/api.test.ts",
+    "test:runtime": "npm run build && node --import tsx --test --test-concurrency=1 tests/runtime.test.ts",
     "build": "wrangler deploy --dry-run --config wrangler.example.toml --outdir dist",
     "deploy": "npm run ci && wrangler deploy",
-    "ci": "npm run check && npm test && npm run build && npm audit --audit-level=moderate"
+    "ci": "npm run check && npm test && npm run test:runtime && npm audit --audit-level=moderate"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261002.1",
+    "miniflare": "5.20261001.0-alpha",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "wrangler": "^4.146.0"
