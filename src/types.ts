@@ -13,6 +13,8 @@ export interface Env {
 	BASE_URL?: string;
 	TURNSTILE_SECRET_KEY?: string;
 	DEV?: boolean;
+	ACCESS_TEAM_DOMAIN?: string; // Team hostname, e.g. your-team.cloudflareaccess.com
+	ACCESS_AUD?: string;         // Access application's audience tag
 	// 私人邮箱与签名密钥一律通过 `wrangler secret put` 注入，禁止写进 wrangler.toml / 源码（会进 git）。
 	ADMIN_EMAILS?: string;       // 管理员登录邮箱（admin 权限校验）——原先明文在 wrangler.toml，已改 secret
 	CONTACT_TO_EMAIL?: string;   // 博主收件箱：联系表单 + 评论待审通知都发到这里
@@ -21,6 +23,8 @@ export interface Env {
 
 export interface SessionRow {
 	user_id: string;
+	email: string | null;
+	email_verified: number;
 	login: string;
 	name: string | null;
 	avatar_url: string | null;

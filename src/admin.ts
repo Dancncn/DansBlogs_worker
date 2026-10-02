@@ -1,19 +1,13 @@
 import type { Env } from './types';
-import { json } from './utils';
+import { json, bearerToken, findSessionUser, isSessionAdmin } from './utils';
+import { verifiedAccessAdminEmail } from './access';
 
 async function adminAuth(request: Request, env: Env): Promise<{ authorized: boolean; email: string | null }> {
-	const cfEmail = request.headers.get('CF-Access-Authenticated-User-Email');
-	if (!cfEmail) return { authorized: false, email: null };
-
-	const adminList = (env.ADMIN_EMAILS || '')
-		.split(',')
-		.map(e => e.trim().toLowerCase())
-		.filter(Boolean);
-
-	return {
-		authorized: adminList.includes(cfEmail.toLowerCase()),
-		email: cfEmail,
-	};
+	const token = bearerToken(request);
+	const session = token ? await findSessionUser(env, token) : null;
+	if (session && isSessionAdmin(session, env)) return { authorized: true, email: session.email };
+	const email = await verifiedAccessAdminEmail(request, env);
+	return { authorized: email !== null, email };
 }
 
 export async function handleAdminStats(request: Request, env: Env): Promise<Response> {

@@ -3,14 +3,24 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "wrangler dev --local --port 8787"
+    "dev": "wrangler dev --local --port 8787",
+    "check": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "build": "wrangler deploy --dry-run --config wrangler.example.toml --outdir dist",
+    "deploy": "npm run ci && wrangler deploy",
+    "ci": "npm run check && npm test && npm run build && npm audit --audit-level=moderate"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20241127.0",
-    "typescript": "^5.7.2",
-    "wrangler": "^3.97.0"
+    "@cloudflare/workers-types": "^5.20261002.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.146.0"
   },
   "dependencies": {
+    "jose": "^6.2.12",
     "resend": "^4.1.0"
+  },
+  "engines": {
+    "node": ">=24.0.0"
   }
 }

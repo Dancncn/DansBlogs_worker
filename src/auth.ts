@@ -164,6 +164,8 @@ export async function handleMeUpdate(request: Request, env: Env): Promise<Respon
 
 	const session = await findSessionUser(env, token);
 	if (!session) return json({ error: 'Unauthorized' }, 401);
+	const rate = await checkRateLimit(request, env, 'profile_update');
+	if (rate) return rate;
 
 	if (!request.headers.get('content-type')?.includes('application/json')) {
 		return json({ error: 'Content-Type must be application/json' }, 415);
@@ -310,12 +312,13 @@ export async function handleEmailSend(request: Request, env: Env): Promise<Respo
 		const { Resend } = await import('resend');
 		const resend = new Resend(env.RESEND_API_KEY);
 
-		await resend.emails.send({
+		const result = await resend.emails.send({
 			from: 'Dan\'s Blog Login <login@mail.danarnoux.com>',
 			to: [email],
 			subject: '🔐 Sign in to Dan\'s Blog',
 			html: htmlEmail,
 		});
+		if (result.error) throw new Error('Email provider rejected the login email');
 	} catch (error) {
 		console.error('Failed to send email:', error);
 		return json({ error: 'Failed to send email' }, 500);
@@ -481,7 +484,7 @@ async function verifyTurnstile(token: string, secret: string, remoteIp?: string)
 }
 
 function redirectWithClearedOAuth(returnTo: string): Response {
-	const location = returnTo.includes('danarnoux.com') ? returnTo : FRONTEND_URL;
+	const location = returnTo;
 	const headers = new Headers({ location, 'cache-control': 'no-store' });
 	headers.append('set-cookie', clearCookie(STATE_COOKIE));
 	headers.append('set-cookie', clearCookie(VERIFIER_COOKIE));

@@ -48,7 +48,7 @@ This is the **backend component** of a decoupled blog architecture:
 | GitHub OAuth | PKCE-based authorization flow |
 | Email Login | Magic link via Resend |
 | Comments | Per-post, D1-backed with AI moderation |
-| Image Hosting | R2-backed with signed URLs |
+| Image Hosting | Public R2 URLs; authenticated, user-isolated writes |
 | Rate Limiting | Durable Object-based mechanism |
 | AI Moderation | Cloudflare Workers AI auto-reviews comments |
 | Admin Dashboard | Cloudflare Access protected (under development) |
@@ -81,7 +81,7 @@ This is the **backend component** of a decoupled blog architecture:
 | `/api/images` | GET | List user's uploaded images |
 | `/api/images` | DELETE | Delete an image |
 
-### Admin (Cloudflare Access Required)
+### Admin (Verified Access JWT or Verified Admin Email Session)
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -99,9 +99,11 @@ This is the **backend component** of a decoupled blog architecture:
 users(id, github_id, login, name, email, avatar_url, is_admin, created_at)
 ```
 
+`is_admin` is a legacy stored field; authorization uses a verified email and `ADMIN_EMAILS`, not that field.
+
 ### Sessions
 ```sql
-sessions(id, user_id, token, expires_at, created_at)
+sessions(id, user_id, expires_at, created_at, ip, user_agent)
 ```
 
 ### Comments
@@ -109,10 +111,8 @@ sessions(id, user_id, token, expires_at, created_at)
 comments(id, parent_id, post_slug, user_id, body, status, created_at, updated_at)
 ```
 
-### Images
-```sql
-images(id, user_id, name, url, size, created_at)
-```
+### Images and Views
+Images and their MIME metadata live in R2; there is no images SQL table. D1 stores random directory mappings in `user_image_namespaces`, plus `email_logins` and `post_views`. The authoritative schema is `db/schema.sql`.
 
 ## Tech Stack
 
@@ -122,7 +122,7 @@ images(id, user_id, name, url, size, created_at)
 | Database | Cloudflare D1 (SQLite) |
 | Object Storage | Cloudflare R2 |
 | Rate Limiting | Durable Objects + KV |
-| AI | Cloudflare Workers AI (Llama 3) |
+| AI | Cloudflare Workers AI (Qwen3), rules and manual review fallback |
 | Authentication | GitHub OAuth + Email Magic Links |
 | Email | Resend |
 | Captcha | Cloudflare Turnstile |
@@ -143,9 +143,14 @@ fetch(`${API_BASE}/api/comments?slug=my-post`, {
 
 ## Deployment
 
+Use Node 24. Copy `wrangler.example.toml` to the ignored `wrangler.toml`, replace resource IDs, and configure secrets separately. See [maintenance and security](./docs/maintenance.md) before upgrading an existing deployment. Local checks do not send real email or mutate remote resources.
+
 ```bash
 # Install dependencies
-npm install
+npm ci
+
+# Type checks, API regression tests, dry-run bundle and dependency audit
+npm run ci
 
 # Local development
 npm run dev
@@ -159,7 +164,11 @@ npm run deploy
 ```
 worker/
 ├─ src/
-│  └─ index.ts          # All API route handlers
+│  ├─ index.ts          # Router and Durable Object rate limiter
+│  ├─ auth.ts           # OAuth, email login and sessions
+│  ├─ access.ts         # Cloudflare Access JWT verification
+│  ├─ comments.ts       # Comments and reply trees
+│  └─ ...               # Images, views, moderation, contact and admin
 ├─ db/
 │  └─ schema.sql        # D1 database schema
 ├─ docs/

@@ -29,3 +29,7 @@ node_modules/
 .vscode/
 .idea/
 .DS_Store
+
+# Local development logs
+_dev*.log
+*.tsbuildinfo

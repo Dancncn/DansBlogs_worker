@@ -83,6 +83,35 @@ export async function sha256Base64Url(value: string): Promise<string> {
 	return toBase64Url(new Uint8Array(digest));
 }
 
+// Keep existing database relations intact without exposing email-based primary keys.
+export async function publicUserId(userId: string, env: Env): Promise<string> {
+	const secret = env.MODERATION_SECRET || env.GITHUB_CLIENT_SECRET;
+	if (!secret) throw new Error('Public identity signing key is not configured');
+	const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret),
+		{ name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+	const digest = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`public-user:v1:${userId}`));
+	return `u_${toBase64Url(new Uint8Array(digest))}`;
+}
+
+// Old avatar object keys embedded mailbox addresses. Hide those URLs in public
+// comment payloads without modifying the owner's profile or the stored object.
+export function publicAvatarUrl(avatar: string | null, userId: string, email: string | null): string | null {
+	if (!avatar) return null;
+	const mailboxes = [email, userId.startsWith('email:') ? userId.slice(6) : null]
+		.filter((value): value is string => !!value).map(value => value.toLowerCase());
+	let decoded = avatar;
+	for (let depth = 0; depth <= 4; depth++) {
+		const lowered = decoded.toLowerCase();
+		if (mailboxes.some(mailbox => lowered.includes(mailbox)) || /\/email[_:]/i.test(decoded)) return null;
+		try {
+			const next = decodeURIComponent(decoded);
+			if (next === decoded) return avatar;
+			decoded = next;
+		} catch { return null; }
+	}
+	return null;
+}
+
 export function toBase64Url(bytes: Uint8Array): string {
 	let binary = '';
 	for (const b of bytes) binary += String.fromCharCode(b);
@@ -146,6 +175,8 @@ export async function findSessionUser(env: Env, token: string): Promise<SessionR
 		 s.user_id AS user_id,
 		 s.expires_at AS expires_at,
 		 u.login AS login,
+		 u.email AS email,
+		 u.email_verified AS email_verified,
 		 u.name AS name,
 		 u.avatar_url AS avatar_url,
 		 u.profile_url AS profile_url
@@ -165,6 +196,15 @@ export async function findSessionUser(env: Env, token: string): Promise<SessionR
 	}
 
 	return row;
+}
+
+export function isAdminEmail(email: string | null | undefined, env: Env): boolean {
+	return !!email && (env.ADMIN_EMAILS || '').split(',').map(value => value.trim().toLowerCase())
+		.filter(Boolean).includes(email.toLowerCase());
+}
+
+export function isSessionAdmin(session: SessionRow, env: Env): boolean {
+	return Number(session.email_verified) === 1 && isAdminEmail(session.email, env);
 }
 
 export async function checkRateLimit(request: Request, env: Env, route: string): Promise<Response | null> {
@@ -197,7 +237,6 @@ export function resolveAllowedOrigin(request: Request, env: Env): string | null 
 }
 
 export function isAllowedExternalOrigin(origin: string, envAllowList?: string): boolean {
-	if (/^https:\/\/[a-z0-9-]+\.pages\.dev$/i.test(origin)) return true;
 	const list = (envAllowList ?? '')
 		.split(',')
 		.map((s) => s.trim())
@@ -217,9 +256,10 @@ export function withCors(response: Response, origin: string | null): Response {
 	if (!origin) return response;
 	const headers = new Headers(response.headers);
 	headers.set('access-control-allow-origin', origin);
+	headers.set('access-control-allow-credentials', 'true');
 	headers.set('vary', 'Origin');
 	headers.set('access-control-allow-headers', 'Authorization, Content-Type');
-	headers.set('access-control-allow-methods', 'GET,POST,OPTIONS');
+	headers.set('access-control-allow-methods', 'GET,POST,DELETE,OPTIONS');
 	return new Response(response.body, {
 		status: response.status,
 		statusText: response.statusText,
@@ -230,14 +270,17 @@ export function withCors(response: Response, origin: string | null): Response {
 export function sanitizeReturnTo(raw: string | null, env: Env): string {
 	const fallbackOrigin = firstAllowedOriginFromEnv(env.PUBLIC_ALLOWED_ORIGIN);
 	const fallback = fallbackOrigin || '/';
-	if (!raw) return fallback;
-
-	if (raw.startsWith('/')) {
-		return fallbackOrigin ? new URL(raw, fallbackOrigin).toString() : raw;
-	}
+	if (!raw || raw !== raw.trim() || raw.startsWith('//') || /[\\\u0000-\u001f]/.test(raw)) return fallback;
 
 	try {
+		if (raw.startsWith('/')) {
+			const base = fallbackOrigin || 'https://return.invalid';
+			const url = new URL(raw, base);
+			if (url.origin !== new URL(base).origin) return fallback;
+			return fallbackOrigin ? url.toString() : `${url.pathname}${url.search}${url.hash}`;
+		}
 		const url = new URL(raw);
+		if (url.username || url.password || !['https:', 'http:'].includes(url.protocol)) return fallback;
 		if (isAllowedExternalOrigin(url.origin, env.PUBLIC_ALLOWED_ORIGIN)) {
 			return url.toString();
 		}

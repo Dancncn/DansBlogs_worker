@@ -16,7 +16,29 @@ import { handleContact } from './contact';
 import { handleModerationPage, handleModerationConfirm } from './moderation-approval';
 
 export class RateLimiter {
-	constructor(private readonly state: DurableObjectState) {}
+	constructor(private readonly state: DurableObjectState) {
+		// The old KV-style TTL was unsupported by DO storage. Migrate each
+		// per-IP object once, removing abandoned timestamp keys.
+		void state.blockConcurrencyWhile(async () => {
+			if (await state.storage.get('schema') !== 2) {
+				await state.storage.deleteAll();
+				await state.storage.put('schema', 2);
+			}
+		});
+	}
+
+	async alarm(): Promise<void> {
+		await this.state.blockConcurrencyWhile(async () => {
+			const buckets = await this.state.storage.list<{ count: number; expiresAt: number }>({ prefix: 'bucket:' });
+			let next = Infinity;
+			for (const [key, value] of buckets) {
+				if (value.expiresAt <= Date.now()) await this.state.storage.delete(key);
+				else next = Math.min(next, value.expiresAt);
+			}
+			if (Number.isFinite(next)) await this.state.storage.setAlarm(next);
+			else await this.state.storage.deleteAlarm();
+		});
+	}
 
 	async fetch(request: Request): Promise<Response> {
 		if (request.method !== 'POST') {
@@ -30,28 +52,24 @@ export class RateLimiter {
 			return json({ error: 'Invalid JSON' }, 400);
 		}
 
-		const ip = typeof payload.ip === 'string' && payload.ip ? payload.ip.slice(0, 80) : 'unknown';
 		const route = typeof payload.route === 'string' && payload.route ? payload.route.slice(0, 80) : 'default';
 		const limit = clampInt(payload.limit, 1, 100, RATE_LIMIT_PER_MIN);
 		const windowMs = clampInt(payload.windowMs, 1000, 10 * 60 * 1000, RATE_LIMIT_WINDOW_MS);
 
-		const now = Date.now();
-		const bucket = Math.floor(now / windowMs);
-		const key = `${ip}:${route}:${bucket}`;
-		const count = Number((await this.state.storage.get<number>(key)) ?? 0);
-
-		if (count >= limit) {
-			const retryAfter = Math.max(1, Math.ceil(((bucket + 1) * windowMs - now) / 1000));
-			return json({ error: 'Too Many Requests' }, 429, {
-				'retry-after': String(retryAfter),
+		return this.state.blockConcurrencyWhile(async () => {
+			const now = Date.now();
+			const expiresAt = (Math.floor(now / windowMs) + 1) * windowMs;
+			const key = `bucket:${route}:${windowMs}`;
+			const previous = await this.state.storage.get<{ count: number; expiresAt: number }>(key);
+			const count = previous && previous.expiresAt > now ? previous.count : 0;
+			if (count >= limit) return json({ error: 'Too Many Requests' }, 429, {
+				'retry-after': String(Math.max(1, Math.ceil((expiresAt - now) / 1000))),
 			});
-		}
-
-		await this.state.storage.put(key, count + 1, {
-			expirationTtl: Math.ceil((windowMs * 2) / 1000),
-		} as DurableObjectPutOptions & { expirationTtl: number });
-
-		return json({ ok: true, remaining: limit - (count + 1) }, 200);
+			await this.state.storage.put(key, { count: count + 1, expiresAt });
+			const alarm = await this.state.storage.getAlarm();
+			if (alarm === null || alarm > expiresAt) await this.state.storage.setAlarm(expiresAt);
+			return json({ ok: true, remaining: limit - count - 1 });
+		});
 	}
 }
 
@@ -77,7 +95,7 @@ export default {
 				new Response(null, {
 					status: 204,
 					headers: {
-						'access-control-allow-methods': 'GET,POST,OPTIONS',
+						'access-control-allow-methods': 'GET,POST,DELETE,OPTIONS',
 						'access-control-allow-headers': 'Authorization, Content-Type',
 						'access-control-max-age': '86400',
 					},

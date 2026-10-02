@@ -2,7 +2,7 @@ import type { Env } from './types';
 import { COMMENT_MAX_LENGTH, COMMENT_MIN_LENGTH, COMMENT_DAILY_LIMIT } from './types';
 import {
 	json, bearerToken, normalizePostSlug, containsHtml, randomBase64Url,
-	findSessionUser, checkRateLimit,
+	findSessionUser, checkRateLimit, publicUserId, publicAvatarUrl,
 } from './utils';
 import { moderateContent } from './moderation';
 import { sendModerationEmail } from './moderation-approval';
@@ -21,6 +21,7 @@ export async function handleCommentsGet(request: Request, env: Env): Promise<Res
 		 c.status AS status,
 		 c.created_at AS created_at,
 		 u.id AS user_id,
+		 u.email AS user_email,
 		 u.login AS user_login,
 		 u.name AS user_name,
 		 u.avatar_url AS user_avatar_url,
@@ -39,6 +40,7 @@ export async function handleCommentsGet(request: Request, env: Env): Promise<Res
 			status: string;
 			created_at: number;
 			user_id: string;
+			user_email: string | null;
 			user_login: string;
 			user_name: string | null;
 			user_avatar_url: string | null;
@@ -75,10 +77,10 @@ export async function handleCommentsGet(request: Request, env: Env): Promise<Res
 			createdAt: row.created_at,
 			replies: [],
 			user: {
-				id: row.user_id,
+				id: await publicUserId(row.user_id, env),
 				login: row.user_login,
 				name: row.user_name,
-				avatarUrl: row.user_avatar_url,
+				avatarUrl: publicAvatarUrl(row.user_avatar_url, row.user_id, row.user_email),
 				profileUrl: row.user_profile_url,
 			},
 		};
@@ -190,10 +192,10 @@ export async function handleCommentsPost(request: Request, env: Env): Promise<Re
 				status,
 				createdAt: now,
 				user: {
-					id: session.user_id,
+					id: await publicUserId(session.user_id, env),
 					login: session.login,
 					name: session.name,
-					avatarUrl: session.avatar_url,
+					avatarUrl: publicAvatarUrl(session.avatar_url, session.user_id, session.email),
 					profileUrl: session.profile_url,
 				},
 			},

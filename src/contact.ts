@@ -65,13 +65,14 @@ export async function handleContact(request: Request, env: Env): Promise<Respons
 
 		const htmlContent = buildContactEmailHtml(name, email, message);
 
-		await resend.emails.send({
+		const result = await resend.emails.send({
 			from: 'DAN ARNOUX <contact@mail.danarnoux.com>',
 			to: [to],
 			replyTo: email,
 			subject: `${suspicious ? '⚠️ ' : '📬 '}${name} sent you a message`,
 			html: htmlContent,
 		});
+		if (result.error) throw new Error('Email provider rejected the contact email');
 	} catch (error) {
 		console.error('Failed to send contact email:', error);
 		return json({ error: 'Failed to send message' }, 500);

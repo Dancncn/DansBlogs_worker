@@ -81,7 +81,7 @@
 | `/api/images` | GET | 列出已上传图片 |
 | `/api/images` | DELETE | 删除图片 |
 
-### 管理员（需 Cloudflare Access）
+### 管理员（验证 Access JWT 或已验证管理员邮箱会话）
 
 | 端点 | 方法 | 描述 |
 |------|------|------|
@@ -99,9 +99,11 @@
 users(id, github_id, login, name, email, avatar_url, is_admin, created_at)
 ```
 
+`is_admin` 是保留的历史字段；授权依据已验证邮箱与 `ADMIN_EMAILS`，不读取该字段。
+
 ### 会话
 ```sql
-sessions(id, user_id, token, expires_at, created_at)
+sessions(id, user_id, expires_at, created_at, ip, user_agent)
 ```
 
 ### 评论
@@ -109,10 +111,8 @@ sessions(id, user_id, token, expires_at, created_at)
 comments(id, parent_id, post_slug, user_id, body, status, created_at, updated_at)
 ```
 
-### 图片
-```sql
-images(id, user_id, name, url, size, created_at)
-```
+### 图片与阅读统计
+图片和 MIME 元数据存储于 R2，没有 images SQL 表。D1 在 `user_image_namespaces` 保存随机目录映射，还包含邮箱登录令牌与阅读统计；完整结构以 `db/schema.sql` 为准。
 
 ## 技术栈
 
@@ -122,7 +122,7 @@ images(id, user_id, name, url, size, created_at)
 | 数据库 | Cloudflare D1 (SQLite) |
 | 对象存储 | Cloudflare R2 |
 | 限流 | Durable Objects + KV |
-| AI | Cloudflare Workers AI (Llama 3) |
+| AI | Cloudflare Workers AI (Qwen3)，结合规则与人工待审 |
 | 认证 | GitHub OAuth + 邮箱魔法链接 |
 | 邮件 | Resend |
 | 验证码 | Cloudflare Turnstile |
@@ -141,9 +141,14 @@ fetch(`${API_BASE}/api/comments?slug=my-post`, {
 
 ## 部署
 
+使用 Node 24。先复制 `wrangler.example.toml` 为不提交的 `wrangler.toml` 并替换资源 ID，秘密通过 Wrangler secret 配置。升级已有站点前阅读[维护与安全说明](./maintenance.md)。
+
 ```bash
 # 安装依赖
-npm install
+npm ci
+
+# 类型、接口回归、模拟打包和依赖扫描
+npm run ci
 
 # 本地开发
 npm run dev
@@ -157,7 +162,10 @@ npm run deploy
 ```
 worker/
 ├─ src/
-│  └─ index.ts          # 所有 API 路由处理
+│  ├─ index.ts          # 路由与限流 Durable Object
+│  ├─ auth.ts           # OAuth、邮箱登录与会话
+│  ├─ access.ts         # Access JWT 校验
+│  └─ ...               # 评论、图片、统计、审核与联系模块
 ├─ db/
 │  └─ schema.sql        # D1 数据库 Schema
 ├─ docs/

@@ -1,3 +1,5 @@
+-- Complete schema snapshot for a NEW database. It already includes parent_id.
+-- Do not apply the legacy 0002 migration after initializing from this snapshot.
 CREATE TABLE IF NOT EXISTS users (
 	id TEXT PRIMARY KEY,
 	github_id INTEGER UNIQUE,
@@ -25,6 +27,12 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 
+CREATE TABLE IF NOT EXISTS user_image_namespaces (
+	user_id TEXT PRIMARY KEY NOT NULL,
+	namespace TEXT NOT NULL UNIQUE,
+	FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS comments (
 	id TEXT PRIMARY KEY,
 	parent_id TEXT,
@@ -42,6 +50,7 @@ CREATE TABLE IF NOT EXISTS comments (
 CREATE INDEX IF NOT EXISTS idx_comments_post_status_created_at
 	ON comments(post_slug, status, created_at);
 CREATE INDEX IF NOT EXISTS idx_comments_user_id ON comments(user_id);
+CREATE INDEX IF NOT EXISTS idx_comments_parent_id ON comments(parent_id);
 
 CREATE TABLE IF NOT EXISTS email_logins (
 	id TEXT PRIMARY KEY,

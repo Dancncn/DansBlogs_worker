@@ -1,0 +1,40 @@
+# Copy to wrangler.toml and replace resource IDs before deployment.
+# This checked-in example is also used for a credential-free dry-run build.
+name = "blog-worker"
+main = "src/index.ts"
+compatibility_date = "2026-10-02"
+workers_dev = false
+
+[[d1_databases]]
+binding = "DB"
+database_name = "blog-db"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "blog-images"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT_KV"
+id = "00000000000000000000000000000000"
+
+[[kv_namespaces]]
+binding = "MODERATION_KV"
+id = "11111111111111111111111111111111"
+
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiter"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RateLimiter"]
+
+[ai]
+binding = "AI"
+
+[vars]
+PUBLIC_ALLOWED_ORIGIN = "https://danarnoux.com"
+BASE_URL = "https://api.danarnoux.com"
+# Set ACCESS_TEAM_DOMAIN and ACCESS_AUD to use signed Cloudflare Access JWTs.
+# Store credentials, ADMIN_EMAILS and CONTACT_TO_EMAIL with wrangler secret put.

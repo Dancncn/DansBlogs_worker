@@ -9,6 +9,7 @@ import { escapeHtml } from './utils';
 
 // 对外公开的发信身份（非私人邮箱，绑定 Resend 验证域），可留在源码。
 const FROM = "Dan's Blog <contact@mail.danarnoux.com>";
+const LINK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 function base(env: Env): string {
 	return env.BASE_URL || 'https://api.danarnoux.com';
@@ -44,10 +45,10 @@ function safeEqual(a: string, b: string): boolean {
 	return diff === 0;
 }
 
-async function verifyToken(id: string, action: string, token: string, env: Env): Promise<boolean> {
+async function verifyToken(id: string, action: string, token: string, expires: string, env: Env): Promise<boolean> {
 	const secret = moderationSecret(env);
-	if (!token || !secret) return false;
-	const expected = await sign(`${id}:${action}`, secret);
+	if (!token || !secret || !/^\d{13}$/.test(expires) || Number(expires) <= Date.now()) return false;
+	const expected = await sign(`v2:${id}:${action}:${expires}`, secret);
 	return safeEqual(expected, token);
 }
 
@@ -66,10 +67,11 @@ export async function sendModerationEmail(
 			return;
 		}
 
-		const approveToken = await sign(`${c.id}:approve`, secret);
-		const rejectToken = await sign(`${c.id}:reject`, secret);
+		const expires = Date.now() + LINK_TTL_MS;
+		const approveToken = await sign(`v2:${c.id}:approve:${expires}`, secret);
+		const rejectToken = await sign(`v2:${c.id}:reject:${expires}`, secret);
 		const link = (action: string, token: string) =>
-			`${base(env)}/api/moderate?id=${encodeURIComponent(c.id)}&a=${action}&t=${token}`;
+			`${base(env)}/api/moderate?id=${encodeURIComponent(c.id)}&a=${action}&t=${token}&exp=${expires}`;
 		const approveUrl = link('approve', approveToken);
 		const rejectUrl = link('reject', rejectToken);
 
@@ -81,12 +83,13 @@ export async function sendModerationEmail(
 
 		const { Resend } = await import('resend');
 		const resend = new Resend(env.RESEND_API_KEY);
-		await resend.emails.send({
+		const result = await resend.emails.send({
 			from: FROM,
 			to: [to],
 			subject: `[待审] ${c.author} 的评论`,
 			html: buildModerationEmailHtml(c, approveUrl, rejectUrl),
 		});
+		if (result.error) throw new Error('Email provider rejected the moderation email');
 	} catch (error) {
 		console.error('Failed to send moderation email:', error);
 	}
@@ -99,10 +102,11 @@ export async function handleModerationPage(request: Request, env: Env): Promise<
 	const id = url.searchParams.get('id') || '';
 	const action = url.searchParams.get('a') || '';
 	const token = url.searchParams.get('t') || '';
+	const expires = url.searchParams.get('exp') || '';
 
 	if (!id || !VALID_ACTIONS.has(action)) return htmlResponse(pageShell('链接无效', '<p>缺少必要参数。</p>'), 400);
-	if (!(await verifyToken(id, action, token, env))) {
-		return htmlResponse(pageShell('校验失败', '<p>签名校验未通过，链接可能被篡改或密钥已变更。</p>'), 403);
+	if (!(await verifyToken(id, action, token, expires, env))) {
+		return htmlResponse(pageShell('校验失败', '<p>链接已失效、过期或校验未通过，请从管理后台处理评论。</p>'), 403);
 	}
 
 	const row = await env.DB.prepare(
@@ -111,15 +115,11 @@ export async function handleModerationPage(request: Request, env: Env): Promise<
 	).bind(id).first<{ body: string; status: string; post_slug: string; name: string | null; login: string }>();
 
 	if (!row) return htmlResponse(pageShell('评论不存在', '<p>该评论可能已被删除。</p>'), 404);
+	if (row.status !== 'pending') return htmlResponse(pageShell('已处理', '<p>这条评论已处理，请从管理后台修改结果。</p>'), 409);
 
 	const author = escapeHtml(row.name || row.login || 'Anonymous');
 	const isApprove = action === 'approve';
-	const statusNote = row.status !== 'pending'
-		? `<p style="color:#a16207;">注意：该评论当前状态为 <b>${escapeHtml(row.status)}</b>，并非待审。</p>`
-		: '';
-
 	const body = `
-		${statusNote}
 		<div class="meta">来自 <b>${author}</b> · 文章 <code>${escapeHtml(row.post_slug)}</code></div>
 		<blockquote>${escapeHtml(row.body)}</blockquote>
 		<p>确认要将这条评论标记为 <b>${isApprove ? '通过并公开' : '拒绝'}</b> 吗？</p>
@@ -127,6 +127,7 @@ export async function handleModerationPage(request: Request, env: Env): Promise<
 			<input type="hidden" name="id" value="${escapeHtml(id)}">
 			<input type="hidden" name="a" value="${escapeHtml(action)}">
 			<input type="hidden" name="t" value="${escapeHtml(token)}">
+			<input type="hidden" name="exp" value="${escapeHtml(expires)}">
 			<button class="${isApprove ? 'ok' : 'no'}" type="submit">${isApprove ? '确认通过' : '确认拒绝'}</button>
 		</form>`;
 	return htmlResponse(pageShell(isApprove ? '通过评论' : '拒绝评论', body));
@@ -143,19 +144,20 @@ export async function handleModerationConfirm(request: Request, env: Env): Promi
 	const id = String(form.get('id') || '');
 	const action = String(form.get('a') || '');
 	const token = String(form.get('t') || '');
+	const expires = String(form.get('exp') || '');
 
 	if (!id || !VALID_ACTIONS.has(action)) return htmlResponse(pageShell('参数无效', '<p>缺少必要参数。</p>'), 400);
-	if (!(await verifyToken(id, action, token, env))) {
+	if (!(await verifyToken(id, action, token, expires, env))) {
 		return htmlResponse(pageShell('校验失败', '<p>签名校验未通过。</p>'), 403);
 	}
 
 	const newStatus = action === 'approve' ? 'approved' : 'rejected';
 	const result = await env.DB.prepare(
-		`UPDATE comments SET status = ?, updated_at = ? WHERE id = ?`
+		`UPDATE comments SET status = ?, updated_at = ? WHERE id = ? AND status = 'pending'`
 	).bind(newStatus, Date.now(), id).run();
 
 	if ((result.meta?.changes ?? 0) === 0) {
-		return htmlResponse(pageShell('未改动', '<p>评论不存在或状态未变化。</p>'), 404);
+		return htmlResponse(pageShell('未改动', '<p>评论已处理或不存在，请从管理后台查看。</p>'), 409);
 	}
 
 	const msg = action === 'approve'
@@ -168,7 +170,7 @@ export async function handleModerationConfirm(request: Request, env: Env): Promi
 function htmlResponse(html: string, status = 200): Response {
 	return new Response(html, {
 		status,
-		headers: { 'content-type': 'text/html; charset=utf-8', 'x-robots-tag': 'noindex, nofollow' },
+		headers: { 'content-type': 'text/html; charset=utf-8', 'x-robots-tag': 'noindex, nofollow', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' },
 	});
 }
 
